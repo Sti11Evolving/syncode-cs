@@ -1,3 +1,5 @@
+int count_positive(int values[], int length);
+
 int main(void)
 {
     int values[] = {4, -2, 8, 0, -5, 3};

@@ -1,3 +1,5 @@
+int find_largest(int first, int second);
+
 int main(void)
 {
     int first = 12;

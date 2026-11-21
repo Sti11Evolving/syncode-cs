@@ -1,3 +1,5 @@
+double fahrenheit_to_celsius(double fahrenheit);
+
 int main(void)
 {
     double fahrenheit = 68.0;

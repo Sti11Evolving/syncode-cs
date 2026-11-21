@@ -1,3 +1,5 @@
+int check_even(int number);
+
 int main(void)
 {
     int number = 42;

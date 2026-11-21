@@ -1,3 +1,5 @@
+double rectangle_area(double width, double height);
+
 int main(void)
 {
     double width = 5.5;
