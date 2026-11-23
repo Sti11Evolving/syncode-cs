@@ -1,6 +1,8 @@
 import os
 from syncode.parsers import incremental_parser
 from syncode.parsers.itergen_parser import IGParser
+from syncode.parsers.c_parser import CParser
+from syncode.parsers.c_postlex import CPostLex
 from syncode.parsers.python_parser import PythonIncrementalParser, PythonIndenter
 from syncode.parsers.go_parser import GoIncrementalParser
 import syncode.common as common
@@ -31,20 +33,25 @@ def create_parser(
         if use_symbol_pos_map:
             return IGParser(base_parser, **kwargs)
         
-        if grammar.name == 'python':
+        if grammar.name == 'c':
+            return CParser(base_parser, **kwargs)
+        elif grammar.name == 'python':
             return PythonIncrementalParser(base_parser, indenter, **kwargs)
         elif grammar.name == 'go':
             return GoIncrementalParser(base_parser, **kwargs)
         return incremental_parser.IncrementalParser(base_parser, **kwargs)
 
 
-def create_base_parser(grammar, parser='lalr', indenter=None, cache_filename=None):
+def create_base_parser(grammar, parser='lalr', indenter=None, cache_filename=None, postlex=None):
+    if postlex is None and grammar.name == 'c':
+        postlex = CPostLex()
+
     base_parser = Lark( # This is the standard Lark parser
                         grammar.ebnf,
                         parser=parser,
                         lexer="basic",
                         start="start",
-                        postlex=indenter,
+                        postlex=postlex if postlex is not None else indenter,
                         propagate_positions=True,
                         cache = cache_filename
                     )
