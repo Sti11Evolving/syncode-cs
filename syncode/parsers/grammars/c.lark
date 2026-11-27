@@ -162,9 +162,11 @@ declarator: pointer? direct_declarator
                   | direct_declarator "[" STATIC assignment_expression "]"
                   | direct_declarator "[" type_qualifier_list STATIC assignment_expression "]"
                   | direct_declarator "[" type_qualifier_list assignment_expression? "]"
-                  | direct_declarator "(" parameter_type_list ")"
-                  | direct_declarator "(" ")"
-                  | direct_declarator "(" identifier_list ")"
+                  | direct_declarator function_parameters
+
+function_parameters: "(" parameter_type_list ")"
+                   | "(" ")"
+                   | "(" identifier_list ")"
 
 pointer: "*" type_qualifier_list? pointer?
 type_qualifier_list: type_qualifier+
@@ -218,7 +220,10 @@ statement: labeled_statement
 labeled_statement: IDENTIFIER ":" statement
                  | CASE constant_expression ":" statement
                  | DEFAULT ":" statement
-compound_statement: "{" block_item_list? "}"
+compound_statement: scope_enter "{" block_item_list? scope_exit "}"
+
+scope_enter:
+scope_exit:
 block_item_list: block_item+
 block_item: declaration | statement
 expression_statement: expression? ";"
@@ -226,14 +231,19 @@ selection_statement: IF "(" expression ")" statement (ELSE statement)?
                    | SWITCH "(" expression ")" statement
 iteration_statement: WHILE "(" expression ")" statement
                     | DO statement WHILE "(" expression ")" ";"
-                    | FOR "(" expression_statement expression_statement expression? ")" statement
-                    | FOR "(" declaration expression_statement expression? ")" statement
+                    | FOR for_scope_enter "(" expression_statement expression_statement expression? ")" statement for_scope_exit
+                    | FOR for_scope_enter "(" declaration expression_statement expression? ")" statement for_scope_exit
+for_scope_enter:
+for_scope_exit:
+
 jump_statement: GOTO IDENTIFIER ";"
               | CONTINUE ";"
               | BREAK ";"
               | RETURN expression? ";"
 
-function_definition: declaration_specifiers declarator declaration_list? compound_statement
+function_definition: declaration_specifiers declarator declaration_list? function_body
+function_body: function_scope_enter "{" block_item_list? scope_exit "}"
+function_scope_enter:
 declaration_list: declaration+
 
 // C11 lexical tokens. Keyword terminals have priority over IDENTIFIER.

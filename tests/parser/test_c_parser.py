@@ -172,5 +172,275 @@ class TestCParser(unittest.TestCase):
         ]
         self.assertEqual(value_tokens, ["IDENTIFIER"])
 
+    def test_local_typedef_expires_after_block(self):
+        self.parser.get_acceptable_next_terminals(
+            "void f(void) { typedef int Local; Local inside; }"
+        )
+
+        local_tokens = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "Local"
+        ]
+
+        self.assertEqual(local_tokens, ["IDENTIFIER", "TYPE_NAME"])
+        self.assertNotIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_expired_typedef_cannot_be_used_outside_block(self):
+        from syncode.larkm.exceptions import UnexpectedToken
+
+        with self.assertRaises(UnexpectedToken):
+            self.parser.get_acceptable_next_terminals(
+                "void f(void) { typedef int Local; } Local outside;"
+            )
+
+    def test_outer_typedef_survives_inner_block(self):
+        self.parser.get_acceptable_next_terminals(
+            "typedef int Outer; "
+            "void f(void) { typedef int Local; Local inside; } "
+            "Outer outside;"
+        )
+
+        self.assertIn("Outer", self.parser.type_names)
+        self.assertNotIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_cached_prefix_preserves_local_scope(self):
+        prefix = "void f(void) { typedef int Local;"
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 2)
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " Local inside; }"
+        )
+
+        local_tokens = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "Local"
+        ]
+
+        self.assertEqual(local_tokens, ["IDENTIFIER", "TYPE_NAME"])
+        self.assertNotIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_backtracking_restores_local_scope(self):
+        prefix = "void f(void) { typedef int Local;"
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " Local first; }"
+        )
+
+        self.assertNotIn("Local", self.parser.type_names)
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 2)
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " Local second; }"
+        )
+
+        local_tokens = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "Local"
+        ]
+
+        self.assertEqual(local_tokens, ["IDENTIFIER", "TYPE_NAME"])
+        self.assertNotIn("Local", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_local_variable_shadows_outer_typedef(self):
+        prefix = "typedef int T; void f(void) { int T;"
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertNotIn("T", self.parser.type_names)
+        self.assertEqual(self.parser.state.scopes[-1]["T"], "ordinary")
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " T = 1; } T outside;"
+        )
+
+        token_types = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "T"
+        ]
+
+        self.assertEqual(
+            token_types,
+            ["IDENTIFIER", "IDENTIFIER", "IDENTIFIER", "TYPE_NAME"],
+        )
+        self.assertIn("T", self.parser.type_names)
+
+    def test_typedef_can_declare_same_named_local_variable(self):
+        self.parser.get_acceptable_next_terminals(
+            "typedef int T; "
+            "void f(void) { T T; T = 1; } "
+            "T outside;"
+        )
+
+        token_types = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "T"
+        ]
+
+        self.assertEqual(
+            token_types,
+            [
+                "IDENTIFIER",
+                "TYPE_NAME",
+                "IDENTIFIER",
+                "IDENTIFIER",
+                "TYPE_NAME",
+            ],
+        )
+        self.assertIn("T", self.parser.type_names)
+
+    def test_for_scope_restores_outer_typedef(self):
+        bodies = {
+            "unbraced": "T++;",
+            "braced": "{ T++; }",
+            "nested": (
+                "{ for (int T = 0; T < 2; T++) T++; T++; }"
+            ),
+            "if_else": "if (T) T++; else T--;",
+        }
+
+        for label, body in bodies.items():
+            with self.subTest(case=label):
+                self.parser.reset()
+
+                self.parser.get_acceptable_next_terminals(
+                    "typedef int T; void f(void) { "
+                    "for (int T = 0; T < 2; T++) "
+                    + body
+                    + " T after; }"
+                )
+
+                token_types = [
+                    token.type
+                    for token in self.parser.parsed_lexer_tokens
+                    if token.value == "T"
+                ]
+
+                self.assertEqual(token_types[0], "IDENTIFIER")
+                self.assertTrue(
+                    all(
+                        kind == "IDENTIFIER"
+                        for kind in token_types[1:-1]
+                    )
+                )
+                self.assertEqual(token_types[-1], "TYPE_NAME")
+                self.assertIn("T", self.parser.type_names)
+                self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_backtracking_restores_for_scope(self):
+        prefix = (
+            "typedef int T; void f(void) { "
+            "for (int T = 0; T < 2; T++)"
+        )
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " T++; T after; }"
+        )
+        self.assertIn("T", self.parser.type_names)
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertNotIn("T", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 3)
+        self.assertEqual(
+            self.parser.state.scopes[-1]["T"],
+            "ordinary",
+        )
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " { T--; } T after; }"
+        )
+
+        self.assertIn("T", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_function_parameter_shadows_outer_typedef(self):
+        prefix = "typedef int T; void f(int T) {"
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertNotIn("T", self.parser.type_names)
+        self.assertEqual(self.parser.state.scopes[-1]["T"], "ordinary")
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " T = 1; } T outside;"
+        )
+
+        token_types = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "T"
+        ]
+
+        self.assertEqual(
+            token_types,
+            ["IDENTIFIER", "IDENTIFIER", "IDENTIFIER", "TYPE_NAME"],
+        )
+        self.assertIn("T", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_prototype_parameter_does_not_hide_outer_typedef(self):
+        self.parser.get_acceptable_next_terminals(
+            "typedef int T; void f(int T); T outside;"
+        )
+
+        token_types = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "T"
+        ]
+
+        self.assertEqual(
+            token_types,
+            ["IDENTIFIER", "IDENTIFIER", "TYPE_NAME"],
+        )
+        self.assertIn("T", self.parser.type_names)
+        self.assertEqual(len(self.parser.state.scopes), 1)
+
+    def test_callback_parameter_names_do_not_enter_function_scope(self):
+        prefix = (
+            "typedef int T; "
+            "void f(int (*callback)(int T)) {"
+        )
+
+        self.parser.get_acceptable_next_terminals(prefix)
+
+        self.assertIn("T", self.parser.type_names)
+        self.assertEqual(
+            self.parser.state.scopes[-1],
+            {"callback": "ordinary"},
+        )
+
+        self.parser.get_acceptable_next_terminals(
+            prefix + " T inside; callback(1); } T outside;"
+        )
+
+        token_types = [
+            token.type
+            for token in self.parser.parsed_lexer_tokens
+            if token.value == "T"
+        ]
+
+        self.assertEqual(
+            token_types,
+            ["IDENTIFIER", "IDENTIFIER", "TYPE_NAME", "TYPE_NAME"],
+        )
+
 if __name__ == "__main__":
     unittest.main()
